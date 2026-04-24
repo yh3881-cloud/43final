@@ -3,8 +3,6 @@
 ## Research Question
 **Identifying Hidden Gems and Overpriced Traps in New York City Airbnb listings from a consumer perspective.**
 
-This project builds a reproducible data acquisition and data preparation pipeline for Airbnb listings in NYC, combining listing metadata, calendar pricing/availability, review activity, subway accessibility, and nearby NYPD complaint activity.
-
 ## Data Sources
 1. Inside Airbnb NYC detailed listings  
    - https://insideairbnb.com/get-the-data/
@@ -19,34 +17,7 @@ This project builds a reproducible data acquisition and data preparation pipelin
    - Historic dataset: https://data.cityofnewyork.us/Public-Safety/NYPD-Complaint-Data-Historic/qgea-i56i
    - Current Year To Date dataset: https://data.cityofnewyork.us/Public-Safety/NYPD-Complaint-Data-Current-Year-To-Date-/5uac-w243
 
-## Snapshot Files and Time Window
-- Listings snapshot date: `2025-04-01`
-- Calendar snapshot date: `2025-04-01`
-- Reviews snapshot date: `2026-04-01`
-- Research window: `2025-04-01` to `2026-03-31`
 
-### Why these dates?
-- `listings` is treated as a market snapshot near the start of the research period.
-- `calendar` is taken from the same snapshot and filtered to the next 365 days (`2025-04-01` to `2026-03-31`).
-- `reviews` is pulled from a post-window snapshot (`2026-04-01`) so reviews inside the target window can be recovered.
-- NYPD complaint records are pulled with an API-side date filter to the exact study window, avoiding unnecessary years.
-
-## Project Structure
-```text
-airbnb_nyc_hidden_gem/
-  data/
-    raw/
-    interim/
-    processed/
-  notebooks/
-  src/
-    01_download_data.py
-    02_prepare_data.py
-    03_data_quality_report.py
-  outputs/
-  README.md
-  requirements.txt
-```
 
 ## Setup
 ```bash
@@ -78,50 +49,154 @@ python src/03_data_quality_report.py
 - Pulls NYPD complaint records via Socrata API with `cmplnt_fr_dt` filter between `2025-04-01` and `2026-03-31`.
 
 ### 2) `src/02_prepare_data.py`
-Builds a modeling table by:
-- Cleaning listings:
-  - Currency, percentages, `t/f` booleans, amenities count, invalid row filtering.
-  - Keeps ML-focused features and adds outlier price flags.
-- Cleaning calendar:
-  - Filters to research window.
-  - Creates listing-level price/availability and weekend premium features.
-- Cleaning reviews:
-  - Filters to research window.
-  - Aggregates activity/intensity and recency features.
-- Cleaning subway stations:
-  - Detects coordinate columns (including WKT parsing where needed).
-  - Computes nearest subway distance and nearby station counts with `cKDTree` + haversine.
-- Cleaning NYPD complaints:
-  - Keeps only: `cmplnt_num`, `cmplnt_fr_dt`, `cmplnt_fr_tm`, `ofns_desc`, `law_cat_cd`, `boro_nm`, `latitude`, `longitude`
-  - Parses complaint date, standardizes offense and law category fields.
-  - Drops missing/invalid coordinates and filters to approximate NYC coordinate bounds.
-  - Creates broad offense groups: `violent_crime`, `property_crime`, `other_crime`.
-- Crime proximity features per listing (haversine distance with optimized candidate search):
-  - `crime_count_500m`, `crime_count_1000m`
-  - `felony_count_1000m`, `misdemeanor_count_1000m`, `violation_count_1000m`
-  - `violent_crime_count_1000m`, `property_crime_count_1000m`, `other_crime_count_1000m`
-  - `crime_intensity_log_1000m = log1p(crime_count_1000m)`
-- Merging all features and creating:
-  - `effective_price` (calendar median price fallback to listing price)
-  - Missing-indicator columns
-  - Group-comparative quantiles by `neighbourhood_cleansed + room_type`
-  - Labels:
-    - `hidden_gem_label`
-    - `overpriced_trap_label`
-    - `consumer_value_class` (0 normal, 1 hidden gem, 2 overpriced trap)
+## Data Preprocessing
 
-### 3) `src/03_data_quality_report.py`
-- Loads the processed table.
-- Prints and saves `outputs/data_quality_report.md`.
-- Reports:
-  - Raw files used
-  - Final shape
-  - Date windows
-  - Missing summary (key fields)
-  - Calendar/review coverage
-  - Class distribution
-  - Summary stats for core numeric fields
-  - Important caveats for interpretation
+In `src/02_prepare_data.py`, the **data preprocessing** stage includes the following operations.
+
+### 1. Robust file detection and loading
+- Automatically detects raw files in `data/raw` using keyword matching:
+  - required: listings, calendar, reviews, subway
+  - optional: crime/complaint/NYPD
+- Raises clear errors for missing required files and skips optional crime data if unavailable.
+
+### 2. Listings cleaning (base table)
+- Converts `id` and `host_id` to standardized string keys.
+- Normalizes listing keys (trim spaces, remove trailing `.0`).
+- Cleans `price` from currency strings to numeric values.
+- Converts percentage fields (e.g., `host_response_rate`, `host_acceptance_rate`) to decimals.
+- Converts boolean-like text (`t/f`, `true/false`) into binary indicators.
+- Parses amenities text and creates `amenity_count`.
+- Converts latitude/longitude to numeric.
+- Keeps target modeling columns when available; creates missing columns as `NaN` if absent.
+- Removes invalid listing rows:
+  - missing ID
+  - missing/non-positive price
+  - missing coordinates
+
+### 3. Calendar preprocessing before aggregation
+- Standardizes `listing_id` keys to align with listings.
+- Parses date and filters to the research window (`2025-04-01` to `2026-03-31`).
+- Builds `calendar_price` with row-level fallback:
+  - use `adjusted_price` if present, otherwise `price`
+- Converts availability to numeric `is_available`.
+- Creates weekend indicator (Friday and Saturday nights).
+
+### 4. Reviews preprocessing before aggregation
+- Standardizes `listing_id` keys.
+- Parses review dates and filters to the same research window.
+- Selects reviewer identity column flexibly (`reviewer_id` preferred, otherwise `reviewer_name`).
+
+### 5. Subway data cleaning
+- Detects coordinate columns flexibly (`gtfs_latitude/gtfs_longitude`, `latitude/longitude`, `lat/lon/long`).
+- Parses WKT/geospatial point text when needed.
+- Drops stations with invalid/missing coordinates.
+
+### 6. Optional crime data cleaning
+- Detects complaint date column flexibly (e.g., `cmplnt_fr_dt`, `complaint_date`, `date`).
+- Filters to the research window.
+- Converts and validates coordinates.
+- Restricts records to approximate NYC bounds.
+- Standardizes offense and law-category text.
+
+### 7. Merge-safe postprocessing
+- Uses listings as base table.
+- Left joins aggregated calendar and reviews, then subway and optional crime features.
+- Drops redundant merge keys.
+- Creates:
+  - `effective_price` (calendar median price fallback to listing price)
+  - `missing_calendar_data` indicator
+- Applies controlled missing handling:
+  - fills review/crime count features with 0
+  - fills key categorical fields with `"Unknown"`
+  - creates missing-indicator columns for important numeric variables
+
+---
+
+## Feature Engineering
+
+The **feature engineering** stage transforms cleaned data into listing-level predictive signals and target labels.
+
+### 1. Calendar-derived features (listing level)
+From daily calendar records:
+- `calendar_days`
+- `calendar_avg_price`
+- `calendar_median_price`
+- `calendar_min_price`
+- `calendar_max_price`
+- `calendar_price_std`
+- `calendar_price_volatility`
+- `calendar_available_days`
+- `calendar_available_rate`
+- `calendar_unavailable_days`
+- `calendar_weekend_avg_price`
+- `calendar_weekday_avg_price`
+- `weekend_price_premium`
+- `calendar_minimum_nights_median`
+
+### 2. Review-derived features (listing level)
+From review-level records:
+- `reviews_in_window`
+- `unique_reviewers_in_window`
+- `first_review_in_window`
+- `last_review_in_window`
+- `reviews_last_90d`
+- `reviews_last_180d`
+- `reviews_last_365d`
+- `days_since_last_review_in_window`
+
+### 3. Subway accessibility features (geospatial)
+Using BallTree + haversine:
+- `distance_to_nearest_subway_km`
+- `subway_stations_within_500m`
+- `subway_stations_within_1000m`
+
+### 4. Optional crime proximity features (geospatial)
+If crime data exists:
+- `crime_count_500m`
+- `crime_count_1000m`
+- `violent_crime_count_1000m`
+- `property_crime_count_1000m`
+- `felony_count_1000m`
+- `misdemeanor_count_1000m`
+- `violation_count_1000m`
+- `crime_intensity_log_1000m = log1p(crime_count_1000m)`
+
+### 5. Missingness features
+Creates binary indicators such as:
+- `missing_review_scores_rating`
+- `missing_review_scores_cleanliness`
+- `missing_review_scores_location`
+- `missing_review_scores_value`
+- `missing_host_response_rate`
+- `missing_host_acceptance_rate`
+- `missing_bedrooms`
+- `missing_beds`
+- `missing_bathrooms`
+- `missing_calendar_median_price`
+- `missing_calendar_available_rate`
+
+### 6. Group-relative benchmark features
+Builds comparison groups by `neighbourhood_cleansed + room_type`, then computes:
+- `group_price_q25`
+- `group_price_q75`
+- `group_rating_q75`
+- `group_rating_median`
+- `group_value_median`
+- `group_location_median`
+- `group_subway_distance_median`
+- `group_crime_intensity_median` (if crime exists)
+
+### 7. Label engineering for consumer-value classes
+- Defines `has_enough_reviews`:
+  - `number_of_reviews >= 5` OR `reviews_in_window >= 2`
+- Creates:
+  - `hidden_gem_label`
+  - `overpriced_trap_label`
+- Prevents overlap by prioritizing hidden-gem assignments when both are triggered.
+- Creates final multiclass target:
+  - `consumer_value_class` (`0=normal`, `1=hidden gem`, `2=overpriced trap`)
+
+
 
 ## Hidden Gem / Overpriced Trap Logic
 
@@ -155,9 +230,4 @@ Conflicts are resolved so labels do not overlap.
 - `data/interim/reviews_aggregated.csv`
 - `data/processed/nyc_airbnb_hidden_gem_model_table.csv`
 - `data/processed/data_dictionary_prepared.csv`
-- `outputs/data_quality_report.md`
 
-## Notes
-- If any Inside Airbnb snapshot URL is unavailable (404), update the date constants in scripts to the closest valid snapshot date from the official Get the Data page.
-- Calendar prices/availability are scrape-time observations, not finalized transaction records.
-- NYPD complaint counts represent reported incidents, not exact true crime rates. They may reflect reporting behavior, police activity, and local population or tourist density.
