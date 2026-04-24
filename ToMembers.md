@@ -1,718 +1,358 @@
-# Project Instructions: NYC Airbnb Consumer Value Identification Pipeline
+# 项目流程：纽约 Airbnb 高性价比房源自动挖掘
 
-## 1. Project Positioning 项目定位
+## 1. 项目目标
 
-我们的目标是构建一个：
+识别纽约市 Airbnb 中 **实际价格低于模型预测理论价格**，同时 **评分较高、交通便利、周边条件合理** 的高性价比房源。
 
-> **可复现、可扩展的机器学习分析流程，用于从消费者视角识别并解释纽约市 Airbnb 房源的消费者价值。**
-项目核心思想是：
-
-```text
-Raw multi-source data
-→ Data cleaning and integration
-→ Listing-level feature table
-→ Consumer-value feature engineering
-→ Hidden Gem / Overpriced Trap label construction
-→ EDA and unsupervised learning
-→ Supervised classification
-→ Model interpretation
-```
-
-也就是说，本项目的重点不是一次性找出几个“好房源”，而是设计一个可以重复运行的分析框架。  
-当未来获得新的 Airbnb 数据或外部环境数据时，这个 pipeline 可以重新完成数据清洗、特征构造、标签生成和模型分析。
-
----
-
-## 2. Main Research Question
-
-### 主研究问题
-
-我们希望回答：
-
-> 能否通过 Airbnb listings、calendar、reviews、地铁站和 reported-crime 数据，构建一个可复现的机器学习流程，识别哪些纽约 Airbnb 房源对消费者来说是高性价比选择，哪些可能是高价低值选择？
-
----
-
-## 3. Project Scope 当前项目范围
-
-本项目当前重点包括：
-
-1. Data Acquisition  
-2. Data Cleaning  
-3. Data Integration  
-4. Data Preprocessing  
-5. Feature Engineering  
-6. Label Construction  
-7. Exploratory Data Analysis  
-8. Unsupervised Learning for structure discovery  
-9. Preparation for supervised modeling  
-
----
-
-## 4. Machine Learning Value 机器学习价值
-
-最终数据集可以支持：
+核心思路：
 
 ```text
-EDA
-Clustering
-PCA / dimensionality reduction
-Multiclass classification
-Binary classification
-Model comparison
-Feature importance
-Model interpretation
-```
-
-建模目标不是简单复现规则，而是进一步分析：
-
-```text
-哪些特征组合能够有效识别消费者价值？
-哪些变量对 Hidden Gem / Overpriced Trap 最有解释力？
-即使排除直接构造标签的变量，模型是否仍能学到有意义的模式？
+多源数据
+→ 数据清洗与整合
+→ 特征工程
+→ 理论价格预测
+→ 价格残差分析
+→ 低估房源识别
+→ 空间聚类分析
+→ 结果解释
 ```
 
 ---
 
-## 5. EDA Instructions
+## 2. 研究问题
 
-EDA 的目标不是直接建模，而是理解数据结构、变量分布、标签合理性和潜在建模方向。
+> 哪些纽约 Airbnb 房源在房屋条件、交通、安全和评分相近的情况下，实际价格显著低于理论价格？
 
----
+进一步分析：
 
-### 5.1 Basic Data Quality EDA
-
-需要检查：
-
-```python
-df.shape
-df.head()
-df.info()
-df.describe(include="all")
-df.duplicated(subset=["id"]).sum()
-df.isna().mean().sort_values(ascending=False).head(30)
-```
-
-必须确认：
-
-```text
-最终数据是一行一个 listing
-id 没有重复
-核心字段没有严重缺失
-calendar / reviews / subway / crime features 是否成功合并
-consumer_value_class 是否存在
-```
+1. 哪些特征最影响 Airbnb 的理论价格？
+2. 哪些房源存在明显低估？
+3. 这些低估房源是否集中在特定社区？
+4. 这些区域是否形成空间上的“价值洼地”？
 
 ---
 
-### 5.2 Label Distribution EDA
-
-检查：
-
-```python
-df["consumer_value_class"].value_counts()
-df["consumer_value_class"].value_counts(normalize=True)
-```
-
-需要回答：
+## 3. 整体 Pipeline
 
 ```text
-Hidden Gem 是否过少？
-Overpriced Trap 是否过多？
-是否存在 class imbalance？
-后续建模是否需要 class weight 或 resampling？
-```
-
-建议图表：
-
-```text
-Bar chart of consumer_value_class
-Hidden Gem / Normal / Trap percentage chart
+Raw Data
+   ↓
+Data Cleaning
+   ↓
+Data Integration
+   ↓
+Feature Engineering
+   ↓
+Price Prediction Model
+   ↓
+Residual Analysis
+   ↓
+Undervalued Candidate Detection
+   ↓
+Spatial Clustering
+   ↓
+Interpretation & Reporting
 ```
 
 ---
 
-### 5.3 Price and Value EDA
+## 4. 数据来源
 
-重点变量：
+| 数据 | 作用 |
+|---|---|
+| Airbnb listings | 房源属性、房型、价格、评分、房东信息、经纬度 |
+| Airbnb calendar | 每日价格、可订性、价格波动 |
+| Airbnb reviews | 评论活跃度、房源可靠性 proxy |
+| MTA subway stations | 地铁距离、交通便利性 |
+| NYPD complaints | 周边 reported-crime intensity |
 
-```text
-price
-effective_price
-calendar_median_price
-calendar_avg_price
-calendar_price_volatility
-weekend_price_premium
-```
+---
 
-建议分析：
+## 5. 数据粒度统一
 
-```text
-price distribution
-log price distribution
-effective_price by class
-price volatility by class
-weekend premium by class
-```
+| 原始数据 | 原始粒度 | 处理方式 |
+|---|---|---|
+| listings | 一行一个房源 | 作为主表 |
+| calendar | 一行一个房源的一天 | 按 listing 聚合 |
+| reviews | 一行一条评论 | 按 listing 聚合 |
+| subway | 一行一个地铁站 | 计算距离特征 |
+| crime | 一行一条报案记录 | 计算周边报案强度 |
 
-建议图表：
-
-```text
-Histogram of effective_price
-Histogram of log_effective_price
-Boxplot of effective_price by consumer_value_class
-Boxplot of calendar_price_volatility by class
-Boxplot of weekend_price_premium by class
-```
-
-需要回答：
+最终数据结构：
 
 ```text
-价格是否右偏？
-是否存在极端高价？
-Hidden Gem 是否明显更便宜？
-Overpriced Trap 是否价格明显偏高？
-calendar price 和 listing price 差异是否明显？
+One row = One Airbnb listing
 ```
 
 ---
 
-### 5.4 Rating and Review EDA
+## 6. 数据清洗
 
-重点变量：
+| 数据 | 清洗内容 |
+|---|---|
+| listings | 清洗价格、百分比、t/f 字段、经纬度、设施数量 |
+| calendar | 过滤时间窗、清洗每日价格、计算可订性 |
+| reviews | 过滤时间窗、计算评论活跃度 |
+| subway | 清洗地铁站经纬度 |
+| crime | 清洗报案日期、经纬度、犯罪类别 |
+
+---
+
+## 7. 数据整合
+
+整合逻辑：
 
 ```text
-review_scores_rating
-review_scores_cleanliness
-review_scores_location
-review_scores_value
-number_of_reviews
-reviews_in_window
-reviews_last_90d
-reviews_last_180d
-days_since_last_review_in_window
+listings
++ aggregated calendar features
++ aggregated review features
++ subway accessibility features
++ reported-crime intensity features
+= listing-level modeling table
 ```
 
-建议图表：
+关键要求：
 
 ```text
-Boxplot of review_scores_rating by class
-Boxplot of review_scores_value by class
-Boxplot of reviews_in_window by class
-Histogram of days_since_last_review_in_window
-Scatter plot of effective_price vs review_scores_value
-```
-
-需要回答：
-
-```text
-Hidden Gem 是否评分和 value score 更高？
-Overpriced Trap 是否 value score 更低？
-是否存在高评分但长期没有新评论的房源？
-评论活跃度是否区分不同类别？
+calendar 先按 listing_id 聚合
+reviews 先按 listing_id 聚合
+subway 和 crime 通过经纬度计算空间特征
+最终表格保持一行一个房源
 ```
 
 ---
 
-### 5.5 Room Type and Property Type EDA
+## 8. Feature Engineering
 
-重点变量：
+| 特征组 | 示例变量 | 含义 |
+|---|---|---|
+| 房源属性 | room_type, bedrooms, beds, bathrooms, accommodates | 房源硬件条件 |
+| 房东特征 | host_is_superhost, host_response_rate, host_acceptance_rate | 房东可靠性 |
+| 价格特征 | effective_price, log_effective_price | 实际价格与建模目标 |
+| Calendar 特征 | calendar_median_price, price_volatility, available_rate | 动态价格与可订性 |
+| 评论特征 | reviews_in_window, reviews_last_90d | 房源活跃度 |
+| 交通特征 | subway_distance, stations_within_500m | 地铁便利性 |
+| Crime 特征 | crime_count_1000m, crime_intensity_log | 周边报案强度 |
+| 缺失特征 | missing_rating, missing_calendar_price | 缺失信息记录 |
 
-```text
-room_type
-property_type
-consumer_value_class
-effective_price
-review_scores_rating
-```
+---
 
-建议分析：
+## 9. 核心价格变量
 
-```python
-pd.crosstab(df["room_type"], df["consumer_value_class"], normalize="index")
-```
-
-建议图表：
-
-```text
-Stacked bar chart of class by room_type
-Boxplot of effective_price by room_type
-Boxplot of review_scores_value by room_type
-```
-
-需要回答：
+实际价格：
 
 ```text
-哪种 room type 更容易出现 Hidden Gem？
-哪种 room type 更容易出现 Overpriced Trap？
-Private room 是否更容易有高性价比？
-Entire home/apt 是否更容易高价？
+effective_price = calendar_median_price if available
+                  else listing price
+```
+
+建模目标：
+
+```text
+log_effective_price = log1p(effective_price)
+```
+
+价格预测任务：
+
+```text
+Predict log_effective_price
 ```
 
 ---
 
-### 5.6 Geographic EDA
-
-重点变量：
-
-```text
-neighbourhood_group_cleansed
-neighbourhood_cleansed
-latitude
-longitude
-consumer_value_class
-effective_price
-```
-
-建议计算：
-
-```python
-neigh_summary = (
-    df.groupby("neighbourhood_cleansed")
-      .agg(
-          listings=("id", "count"),
-          hidden_gems=("hidden_gem_label", "sum"),
-          overpriced_traps=("overpriced_trap_label", "sum"),
-          median_price=("effective_price", "median")
-      )
-      .reset_index()
-)
-
-neigh_summary["hidden_gem_rate"] = neigh_summary["hidden_gems"] / neigh_summary["listings"]
-neigh_summary["overpriced_trap_rate"] = neigh_summary["overpriced_traps"] / neigh_summary["listings"]
-```
-
-建议只分析 listing 数足够的社区：
-
-```python
-neigh_summary = neigh_summary[neigh_summary["listings"] >= 30]
-```
-
-建议图表：
-
-```text
-Top neighborhoods by Hidden Gem count
-Top neighborhoods by Hidden Gem rate
-Top neighborhoods by Overpriced Trap count
-Top neighborhoods by Overpriced Trap rate
-Map scatter plot colored by consumer_value_class
-Map scatter plot colored by effective_price
-```
-
-需要回答：
-
-```text
-Hidden Gem 集中在哪些 borough / neighborhood？
-Overpriced Trap 集中在哪里？
-是否存在非核心旅游区但高性价比的社区？
-```
-
----
-
-### 5.7 Subway Accessibility EDA
-
-重点变量：
-
-```text
-distance_to_nearest_subway_km
-subway_stations_within_500m
-subway_stations_within_1000m
-consumer_value_class
-```
-
-建议图表：
-
-```text
-Boxplot of subway distance by class
-Boxplot of subway stations within 500m by class
-Scatter plot of subway distance vs effective_price
-Scatter plot of subway distance vs review_scores_location
-```
-
-需要回答：
-
-```text
-Hidden Gem 是否更靠近地铁？
-Overpriced Trap 是否交通表现较弱？
-低价房源是否可能因为远离地铁才便宜？
-地铁距离和 location score 是否一致？
-```
-
----
-
-### 5.8 Reported-Crime Intensity EDA
-
-如果 crime data 可用，分析：
-
-```text
-crime_count_500m
-crime_count_1000m
-violent_crime_count_1000m
-property_crime_count_1000m
-crime_intensity_log_1000m
-consumer_value_class
-```
-
-建议图表：
-
-```text
-Boxplot of crime_intensity_log_1000m by class
-Boxplot of violent_crime_count_1000m by class
-Scatter plot of crime_intensity_log_1000m vs effective_price
-Crime intensity by borough
-Crime intensity by neighborhood
-```
-
-需要回答：
-
-```text
-Hidden Gem 是否 reported-crime intensity 较低？
-Overpriced Trap 是否周边 reported incidents 较高？
-crime intensity 是否与 borough、价格、地铁距离相关？
-是否需要 log transform？
-```
-
----
-
-### 5.9 Host Feature EDA
-
-重点变量：
-
-```text
-host_is_superhost
-host_response_rate
-host_acceptance_rate
-host_identity_verified
-calculated_host_listings_count
-consumer_value_class
-```
-
-建议分析：
-
-```python
-pd.crosstab(df["host_is_superhost"], df["consumer_value_class"], normalize="index")
-```
-
-建议图表：
-
-```text
-Superhost share by class
-Boxplot of host_response_rate by class
-Boxplot of calculated_host_listings_count by class
-```
-
-需要回答：
-
-```text
-Superhost 是否更容易出现在 Hidden Gem 中？
-Host response rate 是否和评分或类别有关？
-多房源房东是否更容易出现高价房源？
-```
-
----
-
-### 5.10 Correlation Analysis
-
-建议变量：
-
-```text
-effective_price
-calendar_price_volatility
-calendar_available_rate
-review_scores_rating
-review_scores_value
-review_scores_location
-reviews_in_window
-distance_to_nearest_subway_km
-crime_intensity_log_1000m
-amenity_count
-host_response_rate
-host_acceptance_rate
-```
-
-建议图表：
-
-```text
-Correlation heatmap
-Selected scatter plots
-Pair plots for key numeric variables
-```
-
-需要回答：
-
-```text
-价格和评分是否相关？
-价格和地铁距离是否相关？
-value score 和 effective price 是否负相关？
-crime intensity 和价格、地铁距离是否相关？
-哪些变量高度相关？
-```
-
----
-
-### 5.11 Outlier Analysis
-
-重点检查：
-
-```text
-effective_price extremely high
-calendar_price_volatility extremely high
-distance_to_nearest_subway_km extremely high
-crime_count_1000m extremely high
-missing rating but high price
-```
-
-建议代码：
-
-```python
-df.sort_values("effective_price", ascending=False).head(20)
-df.sort_values("calendar_price_volatility", ascending=False).head(20)
-df.sort_values("distance_to_nearest_subway_km", ascending=False).head(20)
-```
-
-需要回答：
-
-```text
-是否需要 log transform？
-是否需要 winsorization？
-是否有经纬度错误？
-是否有异常高价房源？
-```
-
----
-
-## 6. Unsupervised Learning Suggestions
-
-课程项目需要体现 unsupervised learning 的使用。  
-本项目可以将 unsupervised learning 用于 EDA 和 feature insight，而不是最终预测。
-
----
-
-### 6.1 PCA
-
-目的：
-
-```text
-降低维度，观察 listing 是否在消费者价值特征空间中自然分离。
-```
-
-建议特征：
-
-```text
-log_effective_price
-calendar_available_rate
-calendar_price_volatility
-review_scores_rating
-review_scores_value
-reviews_in_window
-distance_to_nearest_subway_km
-crime_intensity_log_1000m
-amenity_count
-```
-
-分析问题：
-
-```text
-Hidden Gem 和 Overpriced Trap 是否在 PCA space 中有分离？
-哪些特征驱动主成分？
-PCA 是否支持现有 label construction？
-```
-
----
-
-### 6.2 Clustering
-
-建议模型：
-
-```text
-K-Means
-Gaussian Mixture Model
-Hierarchical Clustering
-```
-
-目的：
-
-```text
-发现 Airbnb listings 的自然分群。
-```
-
-可能的 cluster profile：
-
-```text
-Low price + high rating + good access
-High price + central location
-High price + weak value
-Low activity listings
-Transit-convenient budget listings
-```
-
-分析方式：
-
-```python
-pd.crosstab(df["cluster"], df["consumer_value_class"], normalize="index")
-```
-
-需要回答：
-
-```text
-自然 cluster 是否和 Hidden Gem / Trap 标签一致？
-哪些 cluster 更像高价值房源？
-哪些 cluster 更像高价低值房源？
-```
-
----
-
-## 7. Feature Leakage Notes
-
-后续 supervised modeling 必须注意 feature leakage。
-
-因为标签构造直接使用了：
-
-```text
-effective_price
-review_scores_rating
-review_scores_value
-review_scores_location
-distance_to_nearest_subway_km
-crime_intensity_log_1000m
-```
-
-如果直接用这些变量预测 label，模型可能只是复现规则。
-
-建议建模时准备两组 features：
-
----
-
-### 7.1 Feature Set A: Rule-Reconstruction Baseline
-
-可以包含直接标签构造变量。
-
-目的：
-
-```text
-验证 label construction 是否逻辑一致。
-```
-
----
-
-### 7.2 Feature Set B: Reduced-Leakage Model
-
-减少或排除直接构造标签的变量。
-
-可使用：
-
-```text
-room_type
-property_type
-accommodates
-bedrooms
-beds
-bathrooms
-minimum_nights
-maximum_nights
-amenity_count
-host_is_superhost
-host_response_rate
-host_acceptance_rate
-host_identity_verified
-calculated_host_listings_count
-calendar_available_rate
-calendar_price_volatility
-weekend_price_premium
-reviews_last_90d
-reviews_last_180d
-subway_stations_within_500m
-subway_stations_within_1000m
-crime_count_500m
-violent_crime_count_1000m
-property_crime_count_1000m
-neighbourhood_cleansed
-neighbourhood_group_cleansed
-```
-
-目的：
-
-```text
-检验在不直接使用标签构造变量的情况下，模型是否仍能识别消费者价值模式。
-```
-
----
-
-## 8. Suggested Modeling Direction
-
-后续建模可以分为三个层次。
-
-### Level 1: Baseline Model
-
-任务：
-
-```text
-Predict consumer_value_class
-```
-
-建议模型：
-
-```text
-Multinomial Logistic Regression
-Decision Tree
-```
-
-用途：
-
-```text
-提供简单可解释 baseline。
-```
-
----
-
-### Level 2: Stronger Supervised Models
-
-建议模型：
-
-```text
-Random Forest
-Gradient Boosting
-XGBoost / LightGBM / CatBoost
-```
+## 10. 价格预测模型
+
+| 模型 | 作用 |
+|---|---|
+| Ridge Regression | 线性 baseline |
+| Random Forest Regressor | 捕捉非线性关系 |
+| Gradient Boosting / XGBoost | 提升预测性能 |
 
 评估指标：
 
+| 指标 | 含义 |
+|---|---|
+| MAE | 平均绝对误差 |
+| RMSE | 对大误差更敏感 |
+| R² | 模型解释度 |
+| MAPE | 百分比误差 |
+
+---
+
+## 11. 理论价格与残差
+
+模型输出：
+
 ```text
-Accuracy
-Macro F1
-Weighted F1
-Precision for Hidden Gem
-Recall for Hidden Gem
-Precision for Overpriced Trap
-Recall for Overpriced Trap
-Confusion Matrix
+predicted_log_price
+predicted_price = expm1(predicted_log_price)
 ```
 
-重点：
+残差指标：
 
 ```text
-不能只看 accuracy。
-因为类别可能不平衡，Macro F1 和 per-class precision / recall 更重要。
+price_gap = predicted_price - effective_price
+```
+
+```text
+undervaluation_ratio = predicted_price / effective_price
+```
+
+```text
+price_residual_log = predicted_log_price - log_effective_price
+```
+
+含义：
+
+```text
+price_residual_log 越大，房源越可能被低估
+undervaluation_ratio 越大，实际价格相对理论价格越低
 ```
 
 ---
 
-### Level 3: Model Interpretation
+## 12. Undervalued Candidate 定义
 
-需要输出：
+一个房源被标记为 `undervalued_candidate = 1`，需要满足：
+
+| 条件 | 含义 |
+|---|---|
+| price_residual_log 位于前 5% 或 10% | 模型认为价格明显低估 |
+| review_scores_rating ≥ 4.8 | 评分较高 |
+| number_of_reviews ≥ 5 或 reviews_in_window ≥ 2 | 评论证据足够 |
+| effective_price > 0 | 价格有效 |
+| distance_to_nearest_subway_km 合理 | 交通条件可接受 |
+| crime_intensity_log_1000m 不高 | 周边 reported-crime intensity 可接受 |
+
+核心输出字段：
 
 ```text
-Feature importance
-Permutation importance
-SHAP values if available
-Partial dependence plots if useful
+undervalued_candidate
+predicted_price
+effective_price
+price_gap
+undervaluation_ratio
+price_residual_log
 ```
 
-重点回答：
+---
+
+## 13. 空间聚类分析
+
+目标：
+
+> 分析低估房源是否集中在特定区域，识别纽约市 Airbnb 的价值洼地。
+
+推荐方法：
+
+| 方法 | 用途 |
+|---|---|
+| DBSCAN | 发现自然空间聚集 |
+| K-Means | 对比性聚类方法 |
+
+聚类特征：
 
 ```text
-哪些特征最能区分 Hidden Gem？
-哪些特征最能识别 Overpriced Trap？
-价格、评分、交通、评论活跃度、crime intensity 中谁最重要？
-Reduced-leakage model 是否仍有较好表现？
+latitude
+longitude
+effective_price
+predicted_price
+undervaluation_ratio
+review_scores_rating
+distance_to_nearest_subway_km
+crime_intensity_log_1000m
 ```
+
+聚类输出：
+
+| 字段 | 含义 |
+|---|---|
+| cluster_id | 价值洼地编号 |
+| number_of_listings | 房源数量 |
+| median_effective_price | 中位实际价格 |
+| median_predicted_price | 中位理论价格 |
+| median_undervaluation_ratio | 中位低估比例 |
+| median_rating | 中位评分 |
+| common_neighborhoods | 主要社区 |
+| median_subway_distance | 中位地铁距离 |
+| median_crime_intensity | 中位 reported-crime intensity |
+
+---
+
+## 14. EDA 重点
+
+| 分析方向 | 目标 |
+|---|---|
+| 价格分布 | 理解价格偏态和异常值 |
+| log price 分布 | 改善价格建模稳定性 |
+| 实际价格 vs 预测价格 | 检查模型预测效果 |
+| 残差分布 | 找出明显低估房源 |
+| 低估房源评分 | 确认房源质量 |
+| 地铁距离 | 检查交通条件 |
+| crime intensity | 检查周边环境 |
+| 社区分布 | 找出价值洼地 |
+| 聚类地图 | 展示空间集中区域 |
+| 特征重要性 | 解释理论价格驱动因素 |
+
+---
+
+## 15. 推荐图表
+
+| 图表 | 作用 |
+|---|---|
+| effective_price histogram | 查看价格分布 |
+| log_effective_price histogram | 查看 log 价格分布 |
+| predicted vs actual price scatter plot | 查看预测效果 |
+| residual distribution plot | 查看低估程度 |
+| undervaluation_ratio by borough | 比较区域差异 |
+| undervalued candidates map | 展示低估房源位置 |
+| DBSCAN cluster map | 展示价值洼地聚类 |
+| feature importance plot | 解释模型结果 |
+
+---
+
+## 16. 最终输出
+
+| 输出 | 内容 |
+|---|---|
+| processed dataset | 清洗后的 listing-level 数据 |
+| model comparison table | 不同价格预测模型表现 |
+| predicted price table | 理论价格、实际价格、残差 |
+| undervalued candidates | 高性价比低估房源 |
+| cluster summary | 价值洼地聚类结果 |
+| EDA figures | 价格、残差、地图、聚类图 |
+| final report | 数据、模型、结果解释 |
+
+建议输出文件：
+
+```text
+data/processed/nyc_airbnb_model_table.csv
+data/processed/nyc_airbnb_undervalued_model_table.csv
+outputs/model_comparison.csv
+outputs/undervalued_candidates.csv
+outputs/undervalued_cluster_summary.csv
+outputs/figures/
+```
+
+---
+
+## 17. 报告主线
+
+报告可以按照以下结构展开：
+
+```text
+1. 数据来源与清洗
+2. 多源数据整合
+3. 特征工程
+4. 理论价格预测模型
+5. 价格残差与低估房源识别
+6. 空间聚类与价值洼地分析
+7. 模型解释与商业意义
+8. 局限性与改进方向
+```
+
+---
+
+## 18. 一句话总结
+
+本项目使用多源时空数据和机器学习模型估计纽约 Airbnb 房源的理论市场价格，识别实际价格显著低于理论价格且评分较高的高性价比房源，并分析这些房源在空间上形成的价值洼地。
