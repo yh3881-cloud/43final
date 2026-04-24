@@ -1,0 +1,10 @@
+pandas
+numpy
+requests
+scipy
+scikit-learn
+pyarrow
+tqdm
+matplotlib
+seaborn
+tabulate

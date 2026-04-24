@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+# Data artifacts (large / reproducible)
+data/raw/
+data/interim/
+data/processed/
+outputs/
+# OS / IDE
+.DS_Store
+.vscode/
