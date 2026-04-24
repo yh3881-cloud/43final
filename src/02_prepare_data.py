@@ -547,6 +547,7 @@ def main() -> None:
             merged = merged.drop(columns=[key_col])
 
     merged["effective_price"] = merged["calendar_median_price"].where(merged["calendar_median_price"].notna(), merged["price"])
+    merged["log_effective_price"] = np.log1p(merged["effective_price"])
     merged["missing_calendar_data"] = merged["calendar_median_price"].isna().astype(int)
 
     review_count_cols = ["reviews_in_window", "unique_reviewers_in_window", "reviews_last_90d", "reviews_last_180d", "reviews_last_365d"]
