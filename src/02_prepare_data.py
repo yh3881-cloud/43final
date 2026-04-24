@@ -96,6 +96,14 @@ def parse_point_wkt(value: object) -> Tuple[float, float]:
     return float(match.group(2)), float(match.group(1))
 
 
+def normalize_listing_key(series: pd.Series) -> pd.Series:
+    return (
+        series.astype(str)
+        .str.strip()
+        .str.replace(r"\.0+$", "", regex=True)
+    )
+
+
 def detect_file(candidates: List[Path], keywords: List[str], exclude_keywords: Optional[List[str]] = None) -> Optional[Path]:
     best_path = None
     best_score = -1
@@ -148,7 +156,7 @@ def prepare_listings(df: pd.DataFrame) -> pd.DataFrame:
     if "id" not in df.columns:
         raise ValueError("Listings file must contain `id` column.")
     out = df.copy()
-    out["id"] = out["id"].astype(str)
+    out["id"] = normalize_listing_key(out["id"])
     if "host_id" in out.columns:
         out["host_id"] = out["host_id"].astype(str)
 
@@ -182,13 +190,18 @@ def prepare_calendar(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -
     if "listing_id" not in df.columns or "date" not in df.columns:
         raise ValueError("Calendar file must contain `listing_id` and `date` columns.")
     out = df.copy()
-    out["listing_id"] = out["listing_id"].astype(str)
+    out["listing_id"] = normalize_listing_key(out["listing_id"])
     out["date"] = pd.to_datetime(out["date"], errors="coerce")
     out = out[out["date"].between(start, end, inclusive="both")].copy()
     rows_after_filter = len(out)
 
-    price_col = "adjusted_price" if "adjusted_price" in out.columns else "price"
-    out["calendar_price"] = clean_currency_to_float(out[price_col])
+    # Row-level fallback: use adjusted_price when present, otherwise price.
+    price_raw = pd.Series(np.nan, index=out.index, dtype="object")
+    if "adjusted_price" in out.columns:
+        price_raw = out["adjusted_price"]
+    if "price" in out.columns:
+        price_raw = price_raw.where(price_raw.notna(), out["price"])
+    out["calendar_price"] = clean_currency_to_float(price_raw)
     out["is_available"] = tf_to_binary(out["available"]) if "available" in out.columns else np.nan
     out["is_weekend"] = out["date"].dt.dayofweek.isin([4, 5]).astype(int)
 
@@ -228,7 +241,7 @@ def prepare_reviews(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) ->
     if "listing_id" not in df.columns or "date" not in df.columns:
         raise ValueError("Reviews file must contain `listing_id` and `date` columns.")
     out = df.copy()
-    out["listing_id"] = out["listing_id"].astype(str)
+    out["listing_id"] = normalize_listing_key(out["listing_id"])
     out["date"] = pd.to_datetime(out["date"], errors="coerce")
     out = out[out["date"].between(start, end, inclusive="both")].copy()
     rows_after_filter = len(out)
