@@ -27,64 +27,274 @@ pip install -r requirements.txt
 ```
 
 ## Run Pipeline
+
+Run the full reproducible pipeline from the project root.
+
 ```bash
+# 1. Download raw source data
 python src/01_download_data.py
+
+# 2. Prepare listing-level modeling table
 python src/02_prepare_data.py
+
+# 3. Optional early data quality check after data preparation
 python src/03_data_quality_report.py
+
+# 4. Train price prediction models and identify undervalued candidates
 python src/04_price_prediction.py
+
+# 5. Cluster undervalued candidates spatially
 python src/05_undervalued_clustering.py
+
+# 6. Regenerate final data quality report with model and cluster outputs
+python src/03_data_quality_report.py
 ```
+
+Optional EDA figures:
+
+```bash
+python notebooks/eda_pre.py
+```
+
+Optional interactive dashboard:
+
+```bash
+streamlit run src/app_airbnb_dashboard.py
+```
+
+> Note: The dashboard requires Streamlit. If it is not already installed, run:
+>
+> ```bash
+> pip install streamlit
+> ```
+
+---
 
 ## What Each Script Does
 
 ### 1) `src/01_download_data.py`
-- Creates `data/raw/` if missing.
-- Downloads:
-  - `data/raw/listings_2025-04-01.csv.gz`
-  - `data/raw/calendar_2025-04-01.csv.gz`
-  - `data/raw/reviews_2026-04-01.csv.gz`
-  - `data/raw/mta_subway_stations.csv`
-  - `data/raw/nypd_complaints_2025-04-01_2026-03-31.csv`
-- Uses streaming download (`requests` + `tqdm` progress bar).
-- Performs file-size and non-empty checks.
-- Handles 404 with clear guidance to switch to the nearest available snapshot date from Inside Airbnb Get the Data page.
-- Pulls NYPD complaint records via Socrata API with `cmplnt_fr_dt` filter between `2025-04-01` and `2026-03-31`.
+
+Downloads the raw source data used in the project.
+
+- Creates the required local data folders if they do not already exist.
+- Downloads the raw Airbnb and supporting datasets.
+- Saves raw files under:
+
+```text
+data/raw/
+```
 
 ### 2) `src/02_prepare_data.py`
-Builds the integrated listing-level feature table by:
-- Cleaning listings:
-  - Currency, percentages, `t/f` booleans, amenities count, invalid row filtering.
-  - Keeps ML-focused features and adds outlier price flags.
-- Cleaning calendar:
-  - Filters to research window.
-  - Creates listing-level price/availability and weekend premium features.
-- Cleaning reviews:
-  - Filters to research window.
-  - Aggregates activity/intensity and recency features.
-- Cleaning subway stations:
-  - Detects coordinate columns (including WKT parsing where needed).
-  - Computes nearest subway distance and nearby station counts with `cKDTree` + haversine.
-- Cleaning NYPD complaints:
-  - Keeps only: `cmplnt_num`, `cmplnt_fr_dt`, `cmplnt_fr_tm`, `ofns_desc`, `law_cat_cd`, `boro_nm`, `latitude`, `longitude`
-  - Parses complaint date, standardizes offense and law category fields.
-  - Drops missing/invalid coordinates and filters to approximate NYC coordinate bounds.
-  - Creates broad offense groups: `violent_crime`, `property_crime`, `other_crime`.
-- Crime proximity features per listing (haversine distance with optimized candidate search):
-  - `crime_count_500m`, `crime_count_1000m`
-  - `felony_count_1000m`, `misdemeanor_count_1000m`, `violation_count_1000m`
-  - `violent_crime_count_1000m`, `property_crime_count_1000m`, `other_crime_count_1000m`
-  - `crime_intensity_log_1000m = log1p(crime_count_1000m)`
-- Merging all features and creating:
-  - `effective_price` (calendar median price fallback to listing price)
-  - `log_effective_price = log1p(effective_price)`
-  - Missing-indicator columns
-  - Legacy diagnostic labels (kept for reference):
-    - `hidden_gem_label`
-    - `overpriced_trap_label`
-    - `consumer_value_class` (0 normal, 1 hidden gem, 2 overpriced trap)
 
+Cleans and prepares the listing-level modeling table.
 
-## Notes
-- If any Inside Airbnb snapshot URL is unavailable (404), update the date constants in scripts to the closest valid snapshot date from the official Get the Data page.
-- Calendar prices/availability are scrape-time observations, not finalized transaction records.
-- NYPD complaint counts represent reported incidents, not exact true crime rates. They may reflect reporting behavior, police activity, and local population or tourist density.
+- Reads raw Airbnb listing, review, calendar, subway, and crime-related files.
+- Builds listing-level features for modeling and analysis.
+- Merges location, review, calendar, transit, and crime features.
+- Saves the prepared modeling table to:
+
+```text
+data/processed/nyc_airbnb_hidden_gem_model_table.csv
+```
+
+### 3) `src/03_data_quality_report.py`
+
+Builds and saves a markdown data quality report.
+
+- Loads the final undervalued model table if it exists:
+
+```text
+data/processed/nyc_airbnb_undervalued_model_table.csv
+```
+
+- Otherwise falls back to:
+
+```text
+data/processed/nyc_airbnb_hidden_gem_model_table.csv
+```
+
+- Saves the report to:
+
+```text
+outputs/data_quality_report.md
+```
+
+- Reports:
+  - Raw files used
+  - Final table shape
+  - Calendar and review research windows
+  - Calendar, review, and complaint coverage
+  - Missing-value summary for key fields
+  - Legacy diagnostic label distributions
+  - Undervalued candidate and cluster distributions
+  - Summary statistics for price, rating, transit, crime, and model-output columns
+  - Major interpretation caveats
+
+### 4) `src/04_price_prediction.py`
+
+Trains supervised price prediction models and identifies undervalued Airbnb listings.
+
+- Reads:
+
+```text
+data/processed/nyc_airbnb_hidden_gem_model_table.csv
+```
+
+- Target variable:
+
+```text
+log_effective_price
+```
+
+- Uses listing, host, review, calendar, transit, crime, and location features.
+- Compares multiple regression models:
+  - Ridge
+  - Random Forest
+  - Gradient Boosting
+- Selects the best model by RMSE.
+- Generates out-of-fold predictions to reduce in-sample prediction leakage.
+- Creates model-output columns:
+  - `predicted_log_price`
+  - `predicted_price`
+  - `price_residual_log`
+  - `price_gap`
+  - `undervaluation_ratio`
+  - `undervalued_candidate`
+- Saves:
+
+```text
+outputs/model_comparison.csv
+outputs/undervalued_candidates.csv
+data/processed/nyc_airbnb_undervalued_model_table.csv
+data/processed/data_dictionary_prepared.csv
+```
+
+### 5) `src/05_undervalued_clustering.py`
+
+Clusters undervalued Airbnb candidates into spatial opportunity zones.
+
+- Reads:
+
+```text
+data/processed/nyc_airbnb_undervalued_model_table.csv
+outputs/undervalued_candidates.csv
+```
+
+- Uses latitude and longitude for DBSCAN clustering with haversine distance.
+- Assigns each undervalued candidate an `undervalued_cluster` label.
+- Treats DBSCAN label `-1` as noise / non-clustered candidates.
+- Builds cluster-level summary metrics:
+  - Number of listings
+  - Median observed effective price
+  - Median predicted price
+  - Median undervaluation ratio
+  - Median rating
+  - Most common neighborhoods
+  - Median subway distance
+  - Median crime intensity
+- Saves:
+
+```text
+outputs/undervalued_candidates.csv
+outputs/undervalued_cluster_summary.csv
+data/processed/nyc_airbnb_undervalued_model_table.csv
+data/processed/data_dictionary_prepared.csv
+```
+
+### Optional) `notebooks/eda_pre.py`
+
+Generates EDA figures for project exploration and presentation support.
+
+- Automatically detects the most relevant processed CSV from:
+
+```text
+data/processed/
+```
+
+- Creates the following folders if missing:
+
+```text
+outputs/
+outputs/figures/
+```
+
+- Generates figures for:
+  - Missing-value patterns
+  - Price distributions
+  - Feature relationships
+  - Calendar availability
+  - Review activity
+  - Subway accessibility
+  - Crime intensity
+  - Neighborhood-level price and listing-count patterns
+- Saves EDA figures as PNG files under:
+
+```text
+outputs/figures/
+```
+
+Run with:
+
+```bash
+python notebooks/eda_pre.py
+```
+
+### Optional) `src/app_airbnb_dashboard.py`
+
+Launches an interactive Streamlit dashboard for user-facing exploration.
+
+- Reads model and clustering outputs:
+
+```text
+data/processed/nyc_airbnb_undervalued_model_table.csv
+outputs/undervalued_candidates.csv
+outputs/undervalued_cluster_summary.csv
+outputs/model_comparison.csv
+```
+
+- Provides sidebar filters for:
+  - Borough
+  - Room type
+  - Maximum observed price
+  - Minimum rating
+  - Minimum model-implied discount
+  - Minimum review evidence
+  - Model-flagged undervalued candidates
+  - Spatial cluster ID
+- Includes dashboard tabs for:
+  - Overview
+  - Interactive map
+  - Recommendations
+  - Key insights
+  - Spatial clusters
+  - Workflow explanation
+
+Run after completing scripts 01–05:
+
+```bash
+streamlit run src/app_airbnb_dashboard.py
+```
+
+---
+
+## Recommended Fixes
+
+### Add Streamlit to `requirements.txt`
+
+```text
+streamlit
+```
+
+### Fix dashboard project root path
+
+In `src/app_airbnb_dashboard.py`, update:
+
+```python
+PROJECT_ROOT = APP_DIR
+```
+
+to:
+
+```python
+PROJECT_ROOT = APP_DIR.parent
+```
