@@ -8,3 +8,6 @@ tqdm
 matplotlib
 seaborn
 tabulate
+plotly
+pydeck
+jinja2>=3.0.0
